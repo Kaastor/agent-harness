@@ -1,13 +1,15 @@
 # agent-harness
 
-Experiment notes for a local governed agent harness.
+Experiments with harnesses for agentic work.
 
-Current focus:
+This repo explores how an outer system can guide, observe, and constrain agent
+sessions without becoming the agent itself.
 
-```text
-Can a user work interactively through a local harness backed by Pi SDK, while
-the harness owns trace capture and a submit gate?
-```
+Focus areas:
 
-Start with the docs-only plan in
-[`docs/plan/pi-interactive-harness.md`](docs/plan/pi-interactive-harness.md).
+- runtime adapters
+- tool and permission boundaries
+- trace capture
+- approval and submit gates
+- workspace evidence
+- review and retry loops
