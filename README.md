@@ -13,3 +13,45 @@ Focus areas:
 - approval and submit gates
 - workspace evidence
 - review and retry loops
+
+## Pi interactive harness
+
+Run the first experiment against a local codebase:
+
+```bash
+npm install
+npm run harness -- interactive-pi examples/small-codebase
+```
+
+Interactive commands:
+
+```text
+ask <prompt>
+status
+submit
+exit
+```
+
+The harness copies the input codebase into `runs/<run-id>/workspace`, starts a
+Pi SDK session for that copied workspace, and records harness-mediated turns.
+`submit` writes the deterministic evidence bundle:
+
+```text
+runs/<run-id>/
+  input/
+  workspace/
+  trace/
+  changes/
+  checks/
+  summary.md
+```
+
+If Pi is installed but no local provider auth is available, the run is
+precondition-stopped with `blocked` submit evidence and no fake trace turns.
+Authenticate Pi locally with `/login` or a supported provider API key, then
+rerun the harness to capture real Q/A turns.
+
+The optional `.agent-harness.json` file in a target codebase may define a
+`checkCommand`. Treat that command as trusted local executable configuration:
+`submit` runs it in the copied workspace with a two-minute timeout and capped
+captured output.

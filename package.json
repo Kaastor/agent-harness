@@ -1,0 +1,23 @@
+{
+  "name": "agent-harness",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Experiments with harnesses for agentic work.",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "harness": "tsx src/cli.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "bin": {
+    "agent-harness": "./dist/cli.js"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "^0.79.10"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.3",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3"
+  }
+}

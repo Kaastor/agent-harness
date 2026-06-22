@@ -197,7 +197,7 @@ The summary should answer:
 
 - What runtime was used?
 - Was Pi SDK available?
-- Was a locally authenticated model available?
+- What locally authenticated model status was observed?
 - Which workspace was used?
 - How many turns happened?
 - What files changed?
