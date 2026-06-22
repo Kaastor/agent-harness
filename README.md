@@ -16,17 +16,39 @@ Focus areas:
 
 ## Pi interactive harness
 
-Run the first experiment against a local codebase:
+### How to run
+
+Install dependencies:
 
 ```bash
 npm install
+```
+
+Run the included sample codebase:
+
+```bash
 npm run harness -- interactive-pi examples/small-codebase
 ```
 
-Interactive commands:
+Or run the harness against another local codebase path:
+
+```bash
+npm run harness -- interactive-pi path/to/codebase
+```
+
+Then use the interactive prompt:
 
 ```text
 ask <prompt>
+status
+submit
+exit
+```
+
+Example session:
+
+```text
+ask Inspect the code and make the smallest safe improvement.
 status
 submit
 exit
