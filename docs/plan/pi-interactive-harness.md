@@ -1,186 +1,150 @@
-# Pi Interactive Harness Experiment Plan
+# Pi Extension Harness Pivot Plan
 
 ## Goal
 
-Test whether Pi can be used as the runtime behind a local interactive harness
-where:
+Use Pi as the interactive harness and make `agent-harness` a Pi extension that
+adds evidence capture and a deterministic submission gate.
+
+The claim being tested is:
 
 ```text
-user logs into Pi with an account/provider of choice
--> user works through the harness on a codebase
--> harness sends prompts to Pi SDK
--> Pi helps inspect or modify the codebase
--> harness records Q/A and code-change trace
--> user runs submit
--> submit runs a simple quality gate
--> harness writes an evidence bundle
-```
-
-The claim being tested is not learning, grading, AI-proof authorship, or
-independent transfer. The claim is:
-
-```text
-Can a local harness mediate interactive agent work and own the trace plus submit gate?
+Can Pi be customized so normal Pi work produces recoverable trace, diff, check,
+and submit-decision evidence?
 ```
 
 ## Non-Goals
 
+- separate readline prompt shell
+- Pi SDK wrapper CLI
+- copied workspace
 - teacher dashboard
 - grading
-- concept-transfer proof
 - cheating prevention
-- multi-user classroom flow
 - perfect provenance
-- universal provider support
-- polished UI
 - LLM-based quality judgement as the first gate
 
-## Experiment Shape
+## Current Shape
 
-Build a small CLI around the Pi SDK:
+The user works directly in Pi:
 
 ```bash
-agent-harness interactive-pi ./examples/small-codebase
+pi -e /path/to/agent-harness/src/extension.ts
 ```
 
-The user interacts with the harness, not directly with Pi. The harness forwards
-prompts to Pi and records the interaction.
-
-Example session:
+Inside Pi:
 
 ```text
-> ask What does this code do?
-> ask Find one quality issue.
-> ask Apply the smallest fix.
-> submit
-> exit
+Ask normal coding questions.
+/submit
+```
+
+`agent-harness` registers Pi slash commands:
+
+```text
+/submit
+/harness-status
 ```
 
 ## Architecture
 
 ```mermaid
 flowchart TD
-    User["User"] --> CLI["agent-harness CLI"]
-    CLI --> Pi["Pi SDK session"]
-    Pi --> Workspace["Copied workspace"]
-    CLI --> Trace["Trace log"]
-    CLI --> Gate["Submit gate"]
-    Gate --> Evidence["Evidence bundle"]
+    User["User"] --> Pi["Pi TUI / print mode"]
+    Pi --> Extension["agent-harness Pi extension"]
+    Extension --> Trace["Pi custom session entries"]
+    Extension --> Git["git status / git diff"]
+    Extension --> Gate["configured checkCommand"]
+    Gate --> Evidence[".git/agent-harness-runs/<run-id>"]
 ```
 
 Plain version:
 
 ```text
-The harness prepares a safe workspace copy, opens a Pi SDK session in that
-workspace, forwards user prompts, captures the transcript/events/diff, and owns
-the submit command.
+Pi owns the interaction. The extension observes Pi lifecycle events, stores Q/A
+and diff snapshots in Pi custom session entries, and materializes an evidence
+bundle when the user runs /submit.
 ```
-
-## MVP Command Set
-
-Implement only this command set first:
-
-```text
-interactive-pi <codebase>
-ask <prompt>
-status
-submit
-exit
-```
-
-Suggested behavior:
-
-- `interactive-pi <codebase>` starts the harness and copies the codebase into
-  `runs/<run-id>/workspace`.
-- `ask <prompt>` sends one user prompt to Pi SDK and records the response.
-- `status` prints current run id, workspace path, git status summary, and turn
-  count.
-- `submit` runs the submit gate and writes or updates the evidence bundle.
-- `exit` ends the session without pretending the work was submitted.
 
 ## Workspace Boundary
 
-The first implementation should not mutate the original codebase directly.
+The first pivot slice is git-bounded and works in place. It does not create a
+workspace copy. Running outside a Git repository is unsupported for this slice.
 
-Use:
+Evidence is stored under Git's private path:
 
 ```text
-runs/<run-id>/workspace
+.git/agent-harness-runs/<run-id>/
 ```
 
-This keeps the experiment recoverable and makes diffs easy to inspect. A later
-version can add an explicit "work in place" mode if needed.
+This keeps evidence out of `git status` and keeps the code diff focused on user
+or agent changes.
 
 ## Trace Capture
 
-For every `ask`, append one JSONL record:
+For each Pi agent run, the extension stores a custom Pi session entry:
 
 ```json
 {
-  "turn": 1,
-  "timestamp": "2026-06-22T00:00:00.000Z",
-  "userPrompt": "Find one quality issue.",
-  "assistantText": "...",
-  "eventsCount": 12,
-  "gitStatusAfterTurn": "...",
-  "diffAfterTurn": "..."
+  "runId": "2026-06-27T23-01-14-587Z",
+  "cwd": "/path/to/repo",
+  "turn": {
+    "turn": 1,
+    "timestamp": "2026-06-27T23:01:17.910Z",
+    "userPrompt": "Find one quality issue.",
+    "assistantText": "...",
+    "gitStatusAfterTurn": "...",
+    "diffAfterTurn": "..."
+  }
 }
 ```
 
-Also write a readable transcript:
+On `/submit`, those entries are written to:
 
 ```text
-runs/<run-id>/trace/transcript.md
+trace/turns.jsonl
+trace/transcript.md
 ```
 
-Do not claim the trace is user thinking. It is only interaction and work
-evidence.
+The trace is interaction/work evidence. It is not a claim about user thinking,
+authorship, or learning.
 
 ## Submit Gate
 
-The first `submit` gate should stay deterministic:
+The first gate is deterministic:
 
 ```text
-submit =
+/submit =
+  recover trace turns from Pi custom session entries
   collect git status
   collect git diff
-  run configured check command if present
-  write submit result
-  write summary
+  run .agent-harness.json checkCommand
+  write evidence bundle
+  return pass, reject, or blocked
 ```
 
-Initial result states:
+Decision rules:
 
-```text
-ready
-needs-retry
-human-review-needed
-blocked
+- `pass` when at least one trace turn exists and `checkCommand` exits 0.
+- `reject` when at least one trace turn exists and `checkCommand` exits nonzero.
+- `blocked` when there is no trace, no configured check, timeout, or evidence
+  cannot be written.
+
+The optional `.agent-harness.json` file defines the trusted local check:
+
+```json
+{
+  "checkCommand": "npm test"
+}
 ```
-
-Recommended first rule:
-
-- `ready` when the configured check exists and passes.
-- `needs-retry` when the configured check runs and fails.
-- `human-review-needed` when no configured check exists but trace and diff were
-  captured.
-- `blocked` when Pi auth/session/workspace setup failed or evidence cannot be
-  written.
-
-Do not add an LLM quality-review skill until the deterministic submit gate
-works.
 
 ## Evidence Bundle
 
-Each run should produce:
+Each submitted run writes:
 
 ```text
-runs/<run-id>/
+.git/agent-harness-runs/<run-id>/
   input/
-    codebase-path.json
     session-config.json
-  workspace/
-    ...
   trace/
     turns.jsonl
     transcript.md
@@ -193,93 +157,40 @@ runs/<run-id>/
   summary.md
 ```
 
-The summary should answer:
+The summary answers:
 
-- What runtime was used?
-- Was Pi SDK available?
-- What locally authenticated model status was observed?
-- Which workspace was used?
-- How many turns happened?
-- What files changed?
-- What checks ran?
-- What did `submit` decide?
-- What evidence supports that decision?
-- What human action, if any, is required?
+- what runtime was used
+- which cwd and Pi session file were used
+- how many turns were traced
+- what files changed according to git
+- what check ran
+- whether `/submit` passed, rejected, or blocked
+- what evidence supports that decision
 
-## Core Questions
+## First Slice Validation
 
-| Question | Success signal |
-| --- | --- |
-| Can the harness start a Pi SDK session? | Session metadata captured |
-| Can the user interact through the harness? | Multiple Q/A turns logged |
-| Can Pi target the workspace copy? | Reads/edits happen under `runs/<run-id>/workspace` |
-| Can the harness collect trace? | `trace/turns.jsonl` and `trace/transcript.md` exist |
-| Can the harness collect changes? | `changes/final.diff` and `changes/file-status.json` exist |
-| Can submit be owned by the harness? | `submit` runs checks and writes summary result |
-| Does auth stay local to Pi? | Harness receives no provider key or token |
-| Is the trace inspectable? | Summary is useful without reading every raw event |
-
-## Behavior Evidence Loop
-
-The first implementation must be verified with one real or precondition-stopped
-run:
+The first slice is valid when:
 
 ```text
-interactive-pi examples/small-codebase
-ask Inspect the code and make the smallest safe improvement.
-submit
-exit
+pi -e src/extension.ts ...
 ```
 
-Expected evidence if Pi auth is available:
+can prove:
 
-```text
-trace/turns.jsonl has at least one user prompt and assistant response
-changes/final.diff exists
-checks/submit-checks.json exists
-summary.md reports runtime/auth/check/change status
-```
-
-Expected evidence if Pi auth is not available:
-
-```text
-summary.md reports human action required
-submit result is blocked
-no fake session or fake trace is created
-```
+- `/submit` is a real Pi slash command.
+- a Pi turn is captured as Q/A trace.
+- git status and diff are captured without harness artifacts polluting status.
+- a passing `checkCommand` produces `pass`.
+- a failing `checkCommand` produces `reject`.
+- zero trace produces `blocked`.
 
 ## Stop Conditions
 
 Stop and report honestly when:
 
-- Pi SDK has no locally authenticated model.
-- Pi requires an interactive login that the agent cannot complete.
-- The harness would need raw provider keys or tokens.
-- The runtime cannot be constrained to the copied workspace.
-- The trace is too thin to reconstruct Q/A turns.
-- Submit cannot write a coherent evidence bundle.
-
-## Main Failure Modes
-
-- User bypasses the harness and works directly in Pi, making trace incomplete.
-- The harness records a transcript but cannot prove which workspace changed.
-- The submit gate becomes decorative and does not own a real decision.
-- The evidence bundle is too noisy to inspect.
-- The tool overclaims learning, authorship, or transfer from interaction trace.
-- The first slice tries to include teacher logic, grading, or LLM review too
-  early.
-
-## Acceptance Bar
-
-The experiment is useful if one run can show:
-
-```text
-what the user asked
-what Pi answered
-what files changed
-what checks ran
-what submit decided
-what evidence supports that decision
-```
-
-That validates the core harness shape better than a one-shot prompt probe.
+- Pi cannot execute custom slash commands through an extension.
+- Pi lifecycle events are insufficient to recover Q/A trace.
+- trace cannot be persisted across process/session boundaries.
+- evidence artifacts pollute the working tree status.
+- `/submit` cannot write a coherent evidence bundle.
+- using Pi credentials is unavailable or requires raw provider tokens.

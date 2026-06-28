@@ -5,12 +5,10 @@
   "description": "Experiments with harnesses for agentic work.",
   "type": "module",
   "scripts": {
-    "build": "tsc",
-    "harness": "tsx src/cli.ts",
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "build": "npm run clean && tsc",
+    "test": "node --import tsx --test test/**/*.test.ts",
     "typecheck": "tsc --noEmit"
-  },
-  "bin": {
-    "agent-harness": "./dist/cli.js"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^0.79.10"

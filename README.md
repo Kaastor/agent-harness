@@ -2,19 +2,18 @@
 
 Experiments with harnesses for agentic work.
 
-This repo explores how an outer system can guide, observe, and constrain agent
-sessions without becoming the agent itself.
+This repo explores how Pi can be customized to guide, observe, and constrain
+agent sessions without replacing Pi's own interactive harness.
 
 Focus areas:
 
-- runtime adapters
 - tool and permission boundaries
 - trace capture
 - approval and submit gates
 - workspace evidence
 - review and retry loops
 
-## Pi interactive harness
+## Pi extension harness
 
 ### How to run
 
@@ -24,56 +23,77 @@ Install dependencies:
 npm install
 ```
 
-Run the included sample codebase:
+Log in with a subscription provider once:
 
 ```bash
-npm run harness -- interactive-pi examples/small-codebase
+npx pi
 ```
 
-Or run the harness against another local codebase path:
+In the Pi prompt, run:
+
+```text
+/login
+```
+
+Select your subscription provider, complete the browser/device login flow, then
+quit Pi with `/quit`. Built-in subscription logins include ChatGPT Plus/Pro
+(Codex), Claude Pro/Max, and GitHub Copilot. Pi stores the token in
+`~/.pi/agent/auth.json`, and the extension uses Pi's normal local auth. For
+Claude Pro/Max, Pi's provider docs note that third-party harness usage draws
+from Anthropic extra usage and may be billed per token.
+
+Run Pi with the extension in a target repo:
 
 ```bash
-npm run harness -- interactive-pi path/to/codebase
+cd examples/small-codebase
+../../node_modules/.bin/pi -e ../../src/extension.ts
 ```
 
-Then use the interactive prompt:
+The target directory must be inside a Git repository. Evidence is written under
+Git's private metadata path so it does not appear in `git status`.
+
+Then work normally in Pi and submit when ready:
 
 ```text
-ask <prompt>
-status
-submit
-exit
+Inspect the code and make the smallest safe improvement.
+/submit
 ```
 
-Example session:
+For a non-interactive smoke run:
 
-```text
-ask Inspect the code and make the smallest safe improvement.
-status
-submit
-exit
+```bash
+../../node_modules/.bin/pi -e ../../src/extension.ts --session-id smoke -p "Reply exactly: smoke ok"
+../../node_modules/.bin/pi -e ../../src/extension.ts --session-id smoke -p "/submit"
 ```
 
-The harness copies the input codebase into `runs/<run-id>/workspace`, starts a
-Pi SDK session for that copied workspace, and records harness-mediated turns.
-`submit` writes the deterministic evidence bundle:
+The extension adds:
 
 ```text
-runs/<run-id>/
+/submit
+/harness-status
+```
+
+Pi remains the harness. `agent-harness` observes Pi lifecycle events, records
+Q/A and diff snapshots as Pi custom session entries, and writes the
+deterministic evidence bundle when `/submit` runs:
+
+```text
+.git/agent-harness-runs/<run-id>/
   input/
-  workspace/
   trace/
   changes/
   checks/
   summary.md
 ```
 
-If Pi is installed but no local provider auth is available, the run is
-precondition-stopped with `blocked` submit evidence and no fake trace turns.
-Authenticate Pi locally with `/login` or a supported provider API key, then
-rerun the harness to capture real Q/A turns.
-
 The optional `.agent-harness.json` file in a target codebase may define a
 `checkCommand`. Treat that command as trusted local executable configuration:
-`submit` runs it in the copied workspace with a two-minute timeout and capped
-captured output.
+`/submit` runs it in the current git-bounded working directory with a two-minute
+timeout and capped captured output.
+
+Submit decisions:
+
+- `pass` when at least one Pi turn was traced and `checkCommand` exits 0.
+- `reject` when at least one Pi turn was traced and `checkCommand` exits nonzero.
+- `blocked` when no trace exists, no check is configured, the check times out,
+  or evidence cannot be written.

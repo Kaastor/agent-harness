@@ -1,60 +1,58 @@
-import { appendFile, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { runCommand, runShellCommand } from "./command.js";
 import type { CommandResult } from "./command.js";
-import type { RunConfig, RuntimeStatus, SubmitDecision, SubmitResult, TraceTurn } from "./types.js";
+import type { RunConfig, SessionConfig, SubmitDecision, SubmitResult, TraceTurn } from "./types.js";
 
 const SUBMIT_CHECK_TIMEOUT_MS = 120_000;
 const SUBMIT_CHECK_OUTPUT_LIMIT_BYTES = 200_000;
+const DEFAULT_CHECK_CONFIG = ".agent-harness.json";
 
-export async function appendTraceTurn(config: RunConfig, turn: TraceTurn): Promise<void> {
-  await appendFile(path.join(config.runPath, "trace", "turns.jsonl"), `${JSON.stringify(turn)}\n`);
-  await appendFile(
-    path.join(config.runPath, "trace", "transcript.md"),
-    [
-      `## Turn ${turn.turn}`,
-      "",
-      "### User",
-      "",
-      turn.userPrompt,
-      "",
-      "### Pi",
-      "",
-      turn.assistantText || "<empty response>",
-      "",
-    ].join("\n"),
-  );
+export async function createRunConfig(cwd: string, piSessionFile?: string, runId = createRunId()): Promise<RunConfig> {
+  const evidenceRoot = await resolveEvidenceRoot(cwd);
+  const runPath = path.join(evidenceRoot, runId);
+  const sessionConfig = await readSessionConfig(cwd, piSessionFile);
+  const config: RunConfig = {
+    runId,
+    runPath,
+    cwd,
+    sessionConfig,
+  };
+
+  await mkdir(path.join(runPath, "input"), { recursive: true });
+  await mkdir(path.join(runPath, "trace"), { recursive: true });
+  await mkdir(path.join(runPath, "changes"), { recursive: true });
+  await mkdir(path.join(runPath, "checks"), { recursive: true });
+  await writeInputArtifacts(config);
+  return config;
 }
 
-export async function readTurnCount(config: RunConfig): Promise<number> {
-  try {
-    const content = await readFile(path.join(config.runPath, "trace", "turns.jsonl"), "utf8");
-    return content.split("\n").filter(Boolean).length;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return 0;
-    }
-    throw error;
+async function resolveEvidenceRoot(cwd: string): Promise<string> {
+  const gitPath = await runCommand("git", ["rev-parse", "--git-path", "agent-harness-runs"], cwd);
+  if (gitPath.exitCode === 0 && gitPath.stdout.trim()) {
+    const resolvedPath = gitPath.stdout.trim();
+    return path.isAbsolute(resolvedPath) ? resolvedPath : path.resolve(cwd, resolvedPath);
   }
+
+  throw new Error(`agent-harness requires a git repository: ${gitPath.stderr || gitPath.error || "git rev-parse failed"}`);
 }
 
-export async function collectGitStatus(workspacePath: string) {
-  return runCommand("git", ["status", "--short"], workspacePath);
+export async function collectGitStatus(cwd: string) {
+  return runCommand("git", ["status", "--short"], cwd);
 }
 
-export async function collectGitDiff(workspacePath: string) {
-  return runCommand("git", ["diff", "--binary"], workspacePath);
+export async function collectGitDiff(cwd: string) {
+  return runCommand("git", ["diff", "--binary"], cwd);
 }
 
-export async function submitRun(config: RunConfig, runtimeStatus: RuntimeStatus): Promise<SubmitResult> {
-  const turns = await readTurnCount(config);
-  const gitStatus = await collectGitStatus(config.workspacePath);
-  const gitDiff = await collectGitDiff(config.workspacePath);
+export async function submitRun(config: RunConfig, traceTurns: TraceTurn[]): Promise<SubmitResult> {
+  const gitStatus = await collectGitStatus(config.cwd);
+  const gitDiff = await collectGitDiff(config.cwd);
   const checkCommand = config.sessionConfig.checkCommand;
   const check = checkCommand
     ? {
         command: checkCommand,
-        result: await runShellCommand(checkCommand, config.workspacePath, {
+        result: await runShellCommand(checkCommand, config.cwd, {
           timeoutMs: SUBMIT_CHECK_TIMEOUT_MS,
           outputLimitBytes: SUBMIT_CHECK_OUTPUT_LIMIT_BYTES,
         }),
@@ -62,32 +60,59 @@ export async function submitRun(config: RunConfig, runtimeStatus: RuntimeStatus)
     : undefined;
 
   const decision = decideSubmit({
-    runtimeStatus,
-    turns,
+    turns: traceTurns.length,
     checkResult: check?.result,
+    hasConfiguredCheck: Boolean(checkCommand),
   });
   const result: SubmitResult = {
     decision,
-    reason: explainDecision(
-      decision,
-      runtimeStatus,
-      turns,
-      check?.result.exitCode,
-      Boolean(checkCommand),
-      Boolean(check?.result.timedOut),
-    ),
+    reason: explainDecision(decision, traceTurns.length, check?.result.exitCode, Boolean(checkCommand), Boolean(check?.result.timedOut)),
     gitStatus,
     gitDiff,
     check,
-    turns,
-    runtimeStatus,
+    turns: traceTurns.length,
   };
 
-  await writeSubmitArtifacts(config, result);
+  await writeSubmitArtifacts(config, result, traceTurns);
   return result;
 }
 
-async function writeSubmitArtifacts(config: RunConfig, result: SubmitResult): Promise<void> {
+async function readSessionConfig(cwd: string, piSessionFile?: string): Promise<SessionConfig> {
+  const configPath = path.join(cwd, DEFAULT_CHECK_CONFIG);
+  const baseConfig: SessionConfig = {
+    runtime: "pi-extension",
+    startedAt: new Date().toISOString(),
+    cwd,
+    piSessionFile,
+  };
+
+  try {
+    const parsed = JSON.parse(await readFile(configPath, "utf8")) as { checkCommand?: unknown };
+    if (typeof parsed.checkCommand === "string" && parsed.checkCommand.trim()) {
+      return { ...baseConfig, checkCommand: parsed.checkCommand.trim() };
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw new Error(`Could not read ${configPath}: ${(error as Error).message}`);
+    }
+  }
+
+  return baseConfig;
+}
+
+async function writeInputArtifacts(config: RunConfig): Promise<void> {
+  await writeFile(
+    path.join(config.runPath, "input", "session-config.json"),
+    `${JSON.stringify(config.sessionConfig, null, 2)}\n`,
+  );
+}
+
+async function writeSubmitArtifacts(config: RunConfig, result: SubmitResult, traceTurns: TraceTurn[]): Promise<void> {
+  await writeFile(
+    path.join(config.runPath, "trace", "turns.jsonl"),
+    traceTurns.map((turn) => JSON.stringify(turn)).join("\n") + (traceTurns.length > 0 ? "\n" : ""),
+  );
+  await writeFile(path.join(config.runPath, "trace", "transcript.md"), renderTranscript(traceTurns));
   await writeFile(path.join(config.runPath, "changes", "final.diff"), result.gitDiff.stdout);
   await writeFile(
     path.join(config.runPath, "changes", "file-status.json"),
@@ -109,7 +134,6 @@ async function writeSubmitArtifacts(config: RunConfig, result: SubmitResult): Pr
       {
         decision: result.decision,
         reason: result.reason,
-        runtimeStatus: result.runtimeStatus,
         turns: result.turns,
         check: result.check ?? null,
       },
@@ -122,61 +146,54 @@ async function writeSubmitArtifacts(config: RunConfig, result: SubmitResult): Pr
 }
 
 function decideSubmit(input: {
-  runtimeStatus: RuntimeStatus;
   turns: number;
+  hasConfiguredCheck: boolean;
   checkResult?: CommandResult;
 }): SubmitDecision {
-  if (!input.runtimeStatus.available || input.runtimeStatus.locallyAuthenticatedModelStatus === "unavailable") {
+  if (input.turns === 0) {
     return "blocked";
   }
-  if (input.turns === 0) {
+  if (!input.hasConfiguredCheck) {
     return "blocked";
   }
   if (input.checkResult?.timedOut) {
     return "blocked";
   }
   if (input.checkResult?.exitCode === 0) {
-    return "ready";
+    return "pass";
   }
   if (input.checkResult !== undefined) {
-    return "needs-retry";
-  }
-  if (input.turns > 0) {
-    return "human-review-needed";
+    return "reject";
   }
   return "blocked";
 }
 
 function explainDecision(
   decision: SubmitDecision,
-  runtimeStatus: RuntimeStatus,
   turns: number,
   checkExitCode: number | null | undefined,
   hasConfiguredCheck: boolean,
   checkTimedOut: boolean,
 ): string {
   if (decision === "blocked") {
-    if (runtimeStatus.available && runtimeStatus.locallyAuthenticatedModelStatus === "available" && checkTimedOut) {
+    if (checkTimedOut) {
       return "Configured check timed out before submit could make a retry decision.";
     }
-    if (!runtimeStatus.available || runtimeStatus.locallyAuthenticatedModelStatus === "unavailable") {
-      if (turns === 0 && !runtimeStatus.humanAction) {
-        return "No Pi turn was captured, so submit cannot produce interaction evidence.";
-      }
-      return runtimeStatus.humanAction ?? runtimeStatus.detail;
+    if (turns === 0) {
+      return "No Pi turn was captured, so submit cannot produce interaction evidence.";
     }
-    return "No Pi turn was captured, so submit cannot produce interaction evidence.";
+    if (!hasConfiguredCheck) {
+      return "No .agent-harness.json checkCommand is configured.";
+    }
+    return "Submit could not produce a deterministic pass or reject decision.";
   }
-  if (decision === "ready") {
+  if (decision === "pass") {
     return `Configured check passed with exit code ${checkExitCode}.`;
   }
-  if (decision === "needs-retry") {
+  if (decision === "reject") {
     return `Configured check failed with exit code ${checkExitCode}.`;
   }
-  if (!hasConfiguredCheck && turns > 0) {
-    return "No configured check exists, but trace and diff evidence were captured.";
-  }
-  return "Submit decision requires human review.";
+  return "Submit decision is unknown.";
 }
 
 function parseGitStatusLine(line: string): { status: string; path: string } {
@@ -204,6 +221,29 @@ function renderCheckOutput(result: SubmitResult): string {
   ].join("\n");
 }
 
+function renderTranscript(traceTurns: TraceTurn[]): string {
+  if (traceTurns.length === 0) {
+    return "No Pi interaction trace captured.\n";
+  }
+
+  return traceTurns
+    .map((turn) =>
+      [
+        `## Turn ${turn.turn}`,
+        "",
+        "### User",
+        "",
+        turn.userPrompt,
+        "",
+        "### Pi",
+        "",
+        turn.assistantText || "<empty response>",
+        "",
+      ].join("\n"),
+    )
+    .join("\n");
+}
+
 function renderSummary(config: RunConfig, result: SubmitResult): string {
   const changedFiles = result.gitStatus.stdout
     .split("\n")
@@ -211,13 +251,12 @@ function renderSummary(config: RunConfig, result: SubmitResult): string {
     .map((line) => `- \`${line}\``);
 
   return [
-    "# Pi Interactive Harness Summary",
+    "# Pi Extension Harness Summary",
     "",
     `Run id: \`${config.runId}\``,
     `Runtime: \`${config.sessionConfig.runtime}\``,
-    `Pi SDK available: \`${result.runtimeStatus.available}\``,
-    `Locally authenticated model status: \`${result.runtimeStatus.locallyAuthenticatedModelStatus}\``,
-    `Workspace: \`${config.workspacePath}\``,
+    `Cwd: \`${config.cwd}\``,
+    `Pi session file: \`${config.sessionConfig.piSessionFile ?? "not persisted"}\``,
     `Turns: \`${result.turns}\``,
     `Submit decision: \`${result.decision}\``,
     `Reason: ${result.reason}`,
@@ -243,18 +282,17 @@ function renderSummary(config: RunConfig, result: SubmitResult): string {
     "",
     "## Evidence",
     "",
-    "- `input/codebase-path.json` records original and copied workspace paths.",
-    "- `input/session-config.json` records runtime and configured check command.",
-    "- `trace/turns.jsonl` records harness-mediated Q/A turns when Pi is available.",
-    "- `trace/transcript.md` records a readable transcript when Pi is available.",
-    "- `changes/final.diff` records final workspace diff.",
+    "- `input/session-config.json` records runtime, cwd, Pi session file, and configured check command.",
+    "- `trace/turns.jsonl` records Pi Q/A turns captured by the extension.",
+    "- `trace/transcript.md` records a readable transcript.",
+    "- `changes/final.diff` records final git diff.",
     "- `changes/file-status.json` records final git status.",
     "- `checks/submit-checks.json` records the deterministic submit decision and its inputs.",
     "- `checks/test-output.txt` records configured check output when present.",
     "",
-    "## Human Action",
-    "",
-    result.runtimeStatus.humanAction ? `Required: ${result.runtimeStatus.humanAction}` : "None recorded by the harness.",
-    "",
   ].join("\n");
+}
+
+function createRunId(): string {
+  return new Date().toISOString().replace(/[:.]/g, "-");
 }
