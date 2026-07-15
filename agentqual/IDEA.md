@@ -104,9 +104,9 @@ of repository tasks. It should:
 6. generate a machine-readable result and a human-readable qualification
    report.
 
-The current Pi evidence harness in this repository can supply trace and change
-evidence, but AgentQual must own experiment orchestration, comparability, and
-the qualification decision.
+The laboratory-class Pi evidence harness in this repository can supply trace
+and change evidence, but AgentQual must own experiment orchestration,
+comparability, and the qualification decision.
 
 ## Evaluation
 

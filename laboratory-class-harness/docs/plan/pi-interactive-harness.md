@@ -28,7 +28,7 @@ and submit-decision evidence?
 The user works directly in Pi:
 
 ```bash
-pi -e /path/to/agent-harness/src/extension.ts
+pi -e /path/to/agent-harness/laboratory-class-harness/src/extension.ts
 ```
 
 Inside Pi:

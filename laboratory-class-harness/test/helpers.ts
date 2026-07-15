@@ -38,4 +38,3 @@ export async function mustRun(command: string, args: string[], cwd: string): Pro
   const result = await runCommand(command, args, cwd);
   assert.equal(result.exitCode, 0, `${result.command}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
 }
-

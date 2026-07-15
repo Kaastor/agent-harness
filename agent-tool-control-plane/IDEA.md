@@ -172,7 +172,8 @@ can produce.
 
 The systems can cooperate without becoming one product:
 
-- the current Pi harness captures interaction, diff, and submit evidence;
+- the laboratory-class Pi harness captures interaction, diff, and submit
+  evidence;
 - the Control Plane owns lifecycle and recovery of side-effecting tool
   operations;
 - AgentQual can use evidence from both when qualifying a model-harness

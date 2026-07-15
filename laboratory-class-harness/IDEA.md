@@ -1,13 +1,18 @@
-# Pi Evidence and Submit Harness
+# Laboratory-Class Pi Evidence Harness
 
-Status: working prototype implemented in the repository root.
+Status: working prototype implemented in this directory.
 
 ## Idea
 
-The current system is a Pi extension that makes an interactive coding-agent run
-recoverable and inspectable. Pi remains responsible for the conversation and
-agent loop; the extension observes the run, captures evidence, and applies a
-deterministic submission gate.
+This is a laboratory-class harness: a Pi extension for running bounded,
+inspectable coding-agent experiments. Pi remains responsible for the
+conversation and agent loop; the extension observes the run, captures evidence,
+and applies a deterministic submission gate.
+
+`Laboratory-class` means that the system prioritizes controlled conditions,
+explicit evidence, repeatability, and understandable failure states. It is an
+experimental instrument rather than a claim of production isolation,
+governance, or reliability.
 
 The concrete question behind the prototype is:
 
@@ -28,7 +33,7 @@ the final answer alone is weak evidence. A reviewer may need to reconstruct:
 The prototype explores whether this evidence can be captured without building a
 second interactive shell around Pi.
 
-## Current System
+## Implemented System
 
 The user starts Pi with the extension inside a Git repository and works through
 the normal Pi interface. The extension registers two commands:
@@ -103,7 +108,7 @@ a tool control plane solve different problems.
 
 ## Value and Uses
 
-The current harness is useful as:
+The laboratory-class harness is useful as:
 
 - a compact experiment in Pi extension lifecycle and session persistence;
 - an inspectable evidence layer for coding-agent experiments;
